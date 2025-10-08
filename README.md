@@ -1,117 +1,232 @@
-# Домашнее задание к занятию "`Название занятия`" - `Фамилия и имя студента`
+# Домашнее задание к занятию "`Репликация и масштабирование. Часть 1`" - `Кудряшов Андрей`
 
-
-### Инструкция по выполнению домашнего задания
-
-   1. Сделайте `fork` данного репозитория к себе в Github и переименуйте его по названию или номеру занятия, например, https://github.com/имя-вашего-репозитория/git-hw или  https://github.com/имя-вашего-репозитория/7-1-ansible-hw).
-   2. Выполните клонирование данного репозитория к себе на ПК с помощью команды `git clone`.
-   3. Выполните домашнее задание и заполните у себя локально этот файл README.md:
-      - впишите вверху название занятия и вашу фамилию и имя
-      - в каждом задании добавьте решение в требуемом виде (текст/код/скриншоты/ссылка)
-      - для корректного добавления скриншотов воспользуйтесь [инструкцией "Как вставить скриншот в шаблон с решением](https://github.com/netology-code/sys-pattern-homework/blob/main/screen-instruction.md)
-      - при оформлении используйте возможности языка разметки md (коротко об этом можно посмотреть в [инструкции  по MarkDown](https://github.com/netology-code/sys-pattern-homework/blob/main/md-instruction.md))
-   4. После завершения работы над домашним заданием сделайте коммит (`git commit -m "comment"`) и отправьте его на Github (`git push origin`);
-   5. Для проверки домашнего задания преподавателем в личном кабинете прикрепите и отправьте ссылку на решение в виде md-файла в вашем Github.
-   6. Любые вопросы по выполнению заданий спрашивайте в чате учебной группы и/или в разделе “Вопросы по заданию” в личном кабинете.
-   
-Желаем успехов в выполнении домашнего задания!
-   
-### Дополнительные материалы, которые могут быть полезны для выполнения задания
-
-1. [Руководство по оформлению Markdown файлов](https://gist.github.com/Jekins/2bf2d0638163f1294637#Code)
 
 ---
 
 ### Задание 1
 
-`Приведите ответ в свободной форме........`
+Master-master - оба сервера ведущие. изменения синхронизируются в обе стороны. возможен конфликт одновременного изменения одной и той же информации.
 
-1. `Заполните здесь этапы выполнения, если требуется ....`
-2. `Заполните здесь этапы выполнения, если требуется ....`
-3. `Заполните здесь этапы выполнения, если требуется ....`
-4. `Заполните здесь этапы выполнения, если требуется ....`
-5. `Заполните здесь этапы выполнения, если требуется ....`
-6. 
-
-```
-Поле для вставки кода...
-....
-....
-....
-....
-```
-
-`При необходимости прикрепитe сюда скриншоты
-![Название скриншота 1](ссылка на скриншот 1)`
+Master - slave - ведущий и ведомый. master - главный, принимает изменения. slave - ведомый, только читает изменения. slave можно перевести в статус master.
 
 
 ---
 
 ### Задание 2
 
-`Приведите ответ в свободной форме........`
+```
+sudo apt update
+sudo apt install docker.io docker-compose -y
+sudo usermod -aG docker kudryashov
+```
+```
+mkdir mysql-replication
+cd mysql-replication
+```
+```
+cat > master.cnf <<EOF
+[mysqld]
+server-id=1
+log-bin=mysql-bin
+binlog-format=ROW
+EOF
+```
+```
+cat > slave.cnf <<EOF
+[mysqld]
+server-id=2
+read-only=1
+EOF
+```
+```
+cat > master.sql <<EOF
+CREATE USER 'repl'@'%' IDENTIFIED WITH mysql_native_password BY 'slavepass';
+GRANT REPLICATION SLAVE ON *.* TO 'repl'@'%';
+FLUSH PRIVILEGES;
+EOF
+```
+```
+cat > slave.sql <<EOF
+CHANGE REPLICATION SOURCE TO
+  SOURCE_HOST='mysql_master',
+  SOURCE_USER='repl',
+  SOURCE_PASSWORD='slavepass',
+  SOURCE_SSL=0;
 
-1. `Заполните здесь этапы выполнения, если требуется ....`
-2. `Заполните здесь этапы выполнения, если требуется ....`
-3. `Заполните здесь этапы выполнения, если требуется ....`
-4. `Заполните здесь этапы выполнения, если требуется ....`
-5. `Заполните здесь этапы выполнения, если требуется ....`
-6. 
+START REPLICA;
+EOF
+```
+```
+cat > Dockerfile.master <<EOF
+FROM mysql:8.0
+COPY master.cnf /etc/mysql/conf.d/my.cnf
+COPY master.sql /docker-entrypoint-initdb.d/
+ENV MYSQL_ROOT_PASSWORD=rootpass
+CMD ["mysqld"]
+EOF
+```
+```
+cat > Dockerfile.slave <<EOF
+FROM mysql:8.0
+COPY slave.cnf /etc/mysql/conf.d/my.cnf
+COPY slave.sql /docker-entrypoint-initdb.d/
+ENV MYSQL_ROOT_PASSWORD=rootpass
+CMD ["mysqld"]
+EOF
+```
+```
+ls -la
+```
+```
+docker build -t mysql_master -f Dockerfile.master .
+```
+```
+docker build -t mysql_slave -f Dockerfile.slave .
+```
+```
+docker run -d --name mysql_master --net replication_net -p 3306:3306 mysql_master
+```
+через 30 сек:
+```
+docker run -d --name mysql_slave --net replication_net -p 3307:3306 mysql_slave
+```
+
+<img width="1273" height="99" alt="1" src="https://github.com/user-attachments/assets/30c7d5f4-0e38-475b-8643-075156ff8c0d" />
 
 ```
-Поле для вставки кода...
-....
-....
-....
-....
+docker exec -it mysql_master mysql -uroot -prootpass -e "
+  CREATE DATABASE test_rep;
+  USE test_rep;
+  CREATE TABLE cities (id INT PRIMARY KEY, name VARCHAR(50));
+  INSERT INTO cities VALUES (1, 'Moscow');
+"
+```
+```
+docker exec -it mysql_slave mysql -uroot -prootpass -e "SELECT * FROM test_rep.cities;"
 ```
 
-`При необходимости прикрепитe сюда скриншоты
-![Название скриншота 2](ссылка на скриншот 2)`
+<img width="1077" height="261" alt="2" src="https://github.com/user-attachments/assets/6fb0aca7-3883-44ec-aeb6-61ec98b6ad22" />
+
+```
+docker exec -it mysql_slave mysql -uroot -prootpass -e "SHOW REPLICA STATUS\G" | grep "Running\|Error"
+```
+
+<img width="1210" height="183" alt="3" src="https://github.com/user-attachments/assets/e087682a-20a3-4baa-ad9a-4a42e771f832" />
 
 
 ---
 
 ### Задание 3
 
-`Приведите ответ в свободной форме........`
-
-1. `Заполните здесь этапы выполнения, если требуется ....`
-2. `Заполните здесь этапы выполнения, если требуется ....`
-3. `Заполните здесь этапы выполнения, если требуется ....`
-4. `Заполните здесь этапы выполнения, если требуется ....`
-5. `Заполните здесь этапы выполнения, если требуется ....`
-6. 
-
 ```
-Поле для вставки кода...
-....
-....
-....
-....
+docker stop mysql_master mysql_slave
+docker rm mysql_master mysql_slave
+docker network rm replication_net
 ```
 
-`При необходимости прикрепитe сюда скриншоты
-![Название скриншота](ссылка на скриншот)`
-
-### Задание 4
-
-`Приведите ответ в свободной форме........`
-
-1. `Заполните здесь этапы выполнения, если требуется ....`
-2. `Заполните здесь этапы выполнения, если требуется ....`
-3. `Заполните здесь этапы выполнения, если требуется ....`
-4. `Заполните здесь этапы выполнения, если требуется ....`
-5. `Заполните здесь этапы выполнения, если требуется ....`
-6. 
-
 ```
-Поле для вставки кода...
-....
-....
-....
-....
+mkdir ~/mysql-master-master
+cd ~/mysql-master-master
 ```
 
-`При необходимости прикрепитe сюда скриншоты
-![Название скриншота](ссылка на скриншот)`
+ID.
+```
+cat > master1.cnf <<EOF
+[mysqld]
+server-id=1
+log-bin=mysql-bin
+binlog-format=ROW
+auto-increment-increment=2
+auto-increment-offset=1
+EOF
+```
+```
+cat > master2.cnf <<EOF
+[mysqld]
+server-id=2
+log-bin=mysql-bin
+binlog-format=ROW
+auto-increment-increment=2
+auto-increment-offset=2
+EOF
+```
+
+Пользователи.
+```
+cat > master1.sql <<EOF
+CREATE USER 'repl'@'%' IDENTIFIED WITH mysql_native_password BY 'pass';
+GRANT REPLICATION SLAVE ON *.* TO 'repl'@'%';
+FLUSH PRIVILEGES;
+EOF
+```
+```
+cat > master2.sql <<EOF
+CREATE USER 'repl'@'%' IDENTIFIED WITH mysql_native_password BY 'pass';
+GRANT REPLICATION SLAVE ON *.* TO 'repl'@'%';
+FLUSH PRIVILEGES;
+EOF
+```
+```
+cat > Dockerfile.master1 <<EOF
+FROM mysql:8.0
+COPY master1.cnf /etc/mysql/conf.d/my.cnf
+COPY master1.sql /docker-entrypoint-initdb.d/
+ENV MYSQL_ROOT_PASSWORD=rootpass
+CMD ["mysqld"]
+EOF
+```
+```
+cat > Dockerfile.master2 <<EOF
+FROM mysql:8.0
+COPY master2.cnf /etc/mysql/conf.d/my.cnf
+COPY master2.sql /docker-entrypoint-initdb.d/
+ENV MYSQL_ROOT_PASSWORD=rootpass
+CMD ["mysqld"]
+EOF
+```
+Сборка.
+```
+docker build -t master1 -f Dockerfile.master1 .
+docker build -t master2 -f Dockerfile.master2 .
+```
+Запуск.
+```
+docker network create mm_net
+```
+```
+docker run -d --name master1 --net mm_net -p 3306:3306 master1
+```
+через 30 сек.
+```
+docker run -d --name master2 --net mm_net -p 3307:3306 master2
+```
+
+Репликация.
+```
+docker exec -it master1 mysql -uroot -prootpass -e "
+  CHANGE REPLICATION SOURCE TO
+    SOURCE_HOST='master2',
+    SOURCE_USER='repl',
+    SOURCE_PASSWORD='pass',
+    SOURCE_SSL=0;
+  START REPLICA;
+"
+```
+```
+docker exec -it master2 mysql -uroot -prootpass -e "
+  CHANGE REPLICATION SOURCE TO
+    SOURCE_HOST='master1',
+    SOURCE_USER='repl',
+    SOURCE_PASSWORD='pass',
+    SOURCE_SSL=0;
+  START REPLICA;
+"
+```
+тест.
+```
+
+```
+
+
+
+---
