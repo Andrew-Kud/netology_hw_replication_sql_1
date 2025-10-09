@@ -150,27 +150,10 @@ auto-increment-increment=2
 auto-increment-offset=2
 EOF
 ```
-
-Пользователи.
-```
-cat > master1.sql <<EOF
-CREATE USER 'repl'@'%' IDENTIFIED WITH mysql_native_password BY 'pass';
-GRANT REPLICATION SLAVE ON *.* TO 'repl'@'%';
-FLUSH PRIVILEGES;
-EOF
-```
-```
-cat > master2.sql <<EOF
-CREATE USER 'repl'@'%' IDENTIFIED WITH mysql_native_password BY 'pass';
-GRANT REPLICATION SLAVE ON *.* TO 'repl'@'%';
-FLUSH PRIVILEGES;
-EOF
-```
 ```
 cat > Dockerfile.master1 <<EOF
 FROM mysql:8.0
 COPY master1.cnf /etc/mysql/conf.d/my.cnf
-COPY master1.sql /docker-entrypoint-initdb.d/
 ENV MYSQL_ROOT_PASSWORD=rootpass
 CMD ["mysqld"]
 EOF
@@ -179,7 +162,6 @@ EOF
 cat > Dockerfile.master2 <<EOF
 FROM mysql:8.0
 COPY master2.cnf /etc/mysql/conf.d/my.cnf
-COPY master2.sql /docker-entrypoint-initdb.d/
 ENV MYSQL_ROOT_PASSWORD=rootpass
 CMD ["mysqld"]
 EOF
@@ -201,32 +183,78 @@ docker run -d --name master1 --net mm_net -p 3306:3306 master1
 docker run -d --name master2 --net mm_net -p 3307:3306 master2
 ```
 
-Репликация.
+Пользователи:
 ```
 docker exec -it master1 mysql -uroot -prootpass -e "
-  CHANGE REPLICATION SOURCE TO
-    SOURCE_HOST='master2',
-    SOURCE_USER='repl',
-    SOURCE_PASSWORD='pass',
-    SOURCE_SSL=0;
-  START REPLICA;
+SET SQL_LOG_BIN=0;
+CREATE USER 'repl'@'%' IDENTIFIED WITH mysql_native_password BY 'pass';
+GRANT REPLICATION SLAVE ON *.* TO 'repl'@'%';
+FLUSH PRIVILEGES;
 "
 ```
 ```
 docker exec -it master2 mysql -uroot -prootpass -e "
-  CHANGE REPLICATION SOURCE TO
-    SOURCE_HOST='master1',
-    SOURCE_USER='repl',
-    SOURCE_PASSWORD='pass',
-    SOURCE_SSL=0;
-  START REPLICA;
+SET SQL_LOG_BIN=0;
+CREATE USER 'repl'@'%' IDENTIFIED WITH mysql_native_password BY 'pass';
+GRANT REPLICATION SLAVE ON *.* TO 'repl'@'%';
+FLUSH PRIVILEGES;
 "
 ```
-тест.
+
+Репликация:
+```
+docker exec -it master1 mysql -uroot -prootpass -e "
+CHANGE REPLICATION SOURCE TO
+  SOURCE_HOST='master2',
+  SOURCE_USER='repl',
+  SOURCE_PASSWORD='pass',
+  SOURCE_SSL=0;
+START REPLICA;
+"
+```
+```
+docker exec -it master2 mysql -uroot -prootpass -e "
+CHANGE REPLICATION SOURCE TO
+  SOURCE_HOST='master1',
+  SOURCE_USER='repl',
+  SOURCE_PASSWORD='pass',
+  SOURCE_SSL=0;
+START REPLICA;
+"
+```
+Проверка:
+```
+docker exec -it master1 mysql -uroot -prootpass -e "SHOW REPLICA STATUS\G" | grep "Running\|Error"
+```
+```
+docker exec -it master2 mysql -uroot -prootpass -e "SHOW REPLICA STATUS\G" | grep "Running\|Error"
 ```
 
+Тест:
+```
+docker exec -i master1 mysql -uroot -prootpass <<< "
+CREATE DATABASE IF NOT EXISTS testmm;
+USE testmm;
+CREATE TABLE t (id INT AUTO_INCREMENT PRIMARY KEY, msg VARCHAR(50));
+INSERT INTO t (msg) VALUES ('From Master1');
+"
+```
+```
+docker exec -i master2 mysql -uroot -prootpass -e "SELECT * FROM testmm.t;"
+```
+```
+docker exec -i master2 mysql -uroot -prootpass <<< "
+USE testmm;
+INSERT INTO t (msg) VALUES ('From Master2');
+"
+```
+```
+docker exec -i master1 mysql -uroot -prootpass -e "SELECT * FROM testmm.t;"
 ```
 
+<img width="958" height="405" alt="10" src="https://github.com/user-attachments/assets/e09aa3b3-e542-4be3-ac38-e6289079dd40" />
+
+<img width="955" height="546" alt="11" src="https://github.com/user-attachments/assets/c3ee9021-0237-4d74-b7be-50d86d75e61e" />
 
 
 ---
